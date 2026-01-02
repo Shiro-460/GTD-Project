@@ -90,6 +90,77 @@
   padding: 2.5rem;
   border: 1px solid rgba(132, 112, 86, 0.2);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 30px 80px rgba(28, 20, 7, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  height: calc(100vh - 240px);
+  position: sticky;
+  top: 1.5rem;
+}
+
+.canvas-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.canvas-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink-700);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid rgba(120, 95, 65, 0.2);
+}
+
+.zoom-btn {
+  border: none;
+  background: #1f1b16;
+  color: #fdf8f1;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.zoom-btn.ghost {
+  background: rgba(31, 27, 22, 0.1);
+  color: var(--ink-800);
+  border-radius: 999px;
+  width: auto;
+  padding: 0 0.8rem;
+}
+
+.zoom-label {
+  min-width: 54px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--ink-800);
+}
+
+.canvas-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0.5rem;
+  cursor: grab;
+}
+
+.canvas-body:active {
+  cursor: grabbing;
 }
 
 .empty {
@@ -113,6 +184,7 @@
   display: flex;
   flex-direction: column;
   gap: 1.75rem;
+  transform-origin: top left;
 }
 
 .node {
@@ -188,12 +260,18 @@
 }
 
 .children {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(
+    var(--child-columns, 1),
+    var(--child-max-size, 160px)
+  );
+  grid-auto-rows: var(--child-max-size, 160px);
   gap: var(--child-gap);
+  width: max-content;
+  max-width: 100%;
   justify-content: center;
-  align-content: flex-start;
-  width: 100%;
+  justify-items: center;
+  align-items: center;
 }
 
 @keyframes rise {
@@ -210,6 +288,11 @@
 @media (max-width: 900px) {
   .app {
     padding: 2.5rem 1.5rem 3.5rem;
+  }
+
+  .canvas {
+    height: auto;
+    position: static;
   }
 
   .node {

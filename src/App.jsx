@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import './App.css'
 
 const createNode = (title = '新規タスク') => {
@@ -62,15 +62,24 @@ const NODE_PADDING = 24
 const baseSizeForDepth = (depth) =>
   BASE_SIZES[Math.min(depth, BASE_SIZES.length - 1)]
 
-const computeNodeSize = (node, depth) => {
+const columnsForChildren = (count) => (count === 0 ? 1 : Math.ceil(Math.sqrt(count)))
+
+const computeLayout = (node, depth) => {
   const baseSize = baseSizeForDepth(depth)
   if (node.children.length === 0) {
-    return baseSize
+    return {
+      size: baseSize,
+      childMaxSize: baseSizeForDepth(depth + 1),
+      columns: 1,
+    }
   }
 
-  const childSizes = node.children.map((child) => computeNodeSize(child, depth + 1))
-  const maxChildSize = Math.max(...childSizes, baseSizeForDepth(depth + 1))
-  const columns = Math.ceil(Math.sqrt(node.children.length))
+  const childLayouts = node.children.map((child) => computeLayout(child, depth + 1))
+  const maxChildSize = Math.max(
+    ...childLayouts.map((child) => child.size),
+    baseSizeForDepth(depth + 1),
+  )
+  const columns = columnsForChildren(node.children.length)
   const rows = Math.ceil(node.children.length / columns)
   const childrenWidth = columns * maxChildSize + (columns - 1) * CHILD_GAP
   const childrenHeight = rows * maxChildSize + (rows - 1) * CHILD_GAP
@@ -80,7 +89,11 @@ const computeNodeSize = (node, depth) => {
   const rectHeight = contentHeight + NODE_PADDING * 2
   const diameter = Math.ceil(Math.sqrt(rectWidth ** 2 + rectHeight ** 2))
 
-  return Math.max(baseSize, diameter)
+  return {
+    size: Math.max(baseSize, diameter),
+    childMaxSize: maxChildSize,
+    columns,
+  }
 }
 
 const TaskNode = ({
@@ -91,30 +104,35 @@ const TaskNode = ({
   onUpdateTitle,
   index,
   depth,
-}) => (
-  <div
-    className="node"
-    data-depth={depth}
-    style={{
-      '--i': index,
-      '--node-size': `${computeNodeSize(node, depth)}px`,
-      '--node-padding': `${NODE_PADDING}px`,
-      '--child-gap': `${CHILD_GAP}px`,
-    }}
-  >
-    <div className="node-card">
-      <input
-        className="node-title"
-        value={node.title}
-        onChange={(event) => onUpdateTitle(node.id, event.target.value)}
+}) => {
+  const layout = computeLayout(node, depth)
+
+  return (
+    <div
+      className="node"
+      data-depth={depth}
+      style={{
+        '--i': index,
+        '--node-size': `${layout.size}px`,
+        '--node-padding': `${NODE_PADDING}px`,
+        '--child-gap': `${CHILD_GAP}px`,
+        '--child-columns': layout.columns,
+        '--child-max-size': `${layout.childMaxSize}px`,
+      }}
+    >
+      <div className="node-card">
+        <input
+          className="node-title"
+          value={node.title}
+          onChange={(event) => onUpdateTitle(node.id, event.target.value)}
         placeholder="タスク名"
       />
       <div className="node-actions">
         <button className="action-btn" onClick={() => onAddChild(node.id)}>
-          +右 子タスク
+          +子タスク
         </button>
         <button className="action-btn ghost" onClick={() => onAddSibling(parentId, node.id)}>
-          +下 同階層
+          +同階層
         </button>
       </div>
       {node.children.length > 0 && (
@@ -133,13 +151,16 @@ const TaskNode = ({
           ))}
         </div>
       )}
+      </div>
     </div>
-  </div>
-)
+  )
+}
 
 function App() {
   const [rootTitle, setRootTitle] = useState('')
   const [nodes, setNodes] = useState([])
+  const [zoom, setZoom] = useState(1)
+  const dragState = useRef({ active: false, x: 0, y: 0, left: 0, top: 0 })
 
   const addRootNode = () => {
     const trimmed = rootTitle.trim()
@@ -160,6 +181,39 @@ function App() {
 
   const addSibling = (parentId, nodeId) => {
     setNodes((prev) => addSiblingInTree(prev, parentId, nodeId))
+  }
+
+  const clampZoom = (value) => Math.min(1.6, Math.max(0.5, value))
+  const handleWheelZoom = (event) => {
+    event.preventDefault()
+    const direction = event.deltaY < 0 ? 1 : -1
+    setZoom((value) => clampZoom(value + direction * 0.08))
+  }
+
+  const handleDragStart = (event) => {
+    const target = event.currentTarget
+    dragState.current = {
+      active: true,
+      x: event.clientX,
+      y: event.clientY,
+      left: target.scrollLeft,
+      top: target.scrollTop,
+    }
+  }
+
+  const handleDragMove = (event) => {
+    if (!dragState.current.active) {
+      return
+    }
+    const target = event.currentTarget
+    const dx = event.clientX - dragState.current.x
+    const dy = event.clientY - dragState.current.y
+    target.scrollLeft = dragState.current.left - dx
+    target.scrollTop = dragState.current.top - dy
+  }
+
+  const handleDragEnd = () => {
+    dragState.current.active = false
   }
 
   return (
@@ -189,27 +243,57 @@ function App() {
       </header>
 
       <main className="canvas">
-        {nodes.length === 0 ? (
-          <div className="empty">
-            <h2>まずは大項目を1つ追加</h2>
-            <p>右に子タスク、下に同階層タスクをどんどん増やしていきましょう。</p>
+        <div className="canvas-header">
+          <p className="canvas-title">タスクマップ</p>
+          <div className="zoom-controls">
+            <button
+              className="zoom-btn"
+              onClick={() => setZoom((value) => clampZoom(value - 0.1))}
+            >
+              −
+            </button>
+            <span className="zoom-label">{Math.round(zoom * 100)}%</span>
+            <button
+              className="zoom-btn"
+              onClick={() => setZoom((value) => clampZoom(value + 0.1))}
+            >
+              ＋
+            </button>
+            <button className="zoom-btn ghost" onClick={() => setZoom(1)}>
+              100%
+            </button>
           </div>
-        ) : (
-          <div className="tree">
-            {nodes.map((node, index) => (
-              <TaskNode
-                key={node.id}
-                node={node}
-                parentId={null}
-                onAddChild={addChild}
-                onAddSibling={addSibling}
-                onUpdateTitle={updateTitle}
-                index={index}
-                depth={0}
-              />
-            ))}
-          </div>
-        )}
+        </div>
+        <div
+          className="canvas-body"
+          onWheel={handleWheelZoom}
+          onMouseDown={handleDragStart}
+          onMouseMove={handleDragMove}
+          onMouseUp={handleDragEnd}
+          onMouseLeave={handleDragEnd}
+        >
+          {nodes.length === 0 ? (
+            <div className="empty">
+              <h2>まずは大項目を1つ追加</h2>
+              <p>子タスクや同階層を増やして、円の中に構造を作りましょう。</p>
+            </div>
+          ) : (
+            <div className="tree" style={{ transform: `scale(${zoom})` }}>
+              {nodes.map((node, index) => (
+                <TaskNode
+                  key={node.id}
+                  node={node}
+                  parentId={null}
+                  onAddChild={addChild}
+                  onAddSibling={addSibling}
+                  onUpdateTitle={updateTitle}
+                  index={index}
+                  depth={0}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   )
