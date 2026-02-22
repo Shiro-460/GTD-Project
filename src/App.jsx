@@ -1,4 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom'
 import './App.css'
 
 const createNode = (title = '新規タスク') => {
@@ -14,6 +22,53 @@ const createNode = (title = '新規タスク') => {
   }
 }
 
+const findLargeById = (nodes, largeId) =>
+  nodes.find((node) => node.id === largeId) ?? null
+
+const findMiddleById = (nodes, largeId, middleId) => {
+  const large = findLargeById(nodes, largeId)
+  if (!large) {
+    return null
+  }
+  return large.children.find((child) => child.id === middleId) ?? null
+}
+
+const addLarge = (nodes, title = '新規大階層', presetNode = null) => [
+  ...nodes,
+  presetNode ?? createNode(title),
+]
+
+const addMiddle = (nodes, largeId, title = '新規中階層') =>
+  nodes.map((node) => {
+    if (node.id !== largeId) {
+      return node
+    }
+    return {
+      ...node,
+      children: [...node.children, createNode(title)],
+    }
+  })
+
+const addSmall = (nodes, largeId, middleId, title = '新規小階層') =>
+  nodes.map((node) => {
+    if (node.id !== largeId) {
+      return node
+    }
+
+    return {
+      ...node,
+      children: node.children.map((middle) => {
+        if (middle.id !== middleId) {
+          return middle
+        }
+        return {
+          ...middle,
+          children: [...middle.children, createNode(title)],
+        }
+      }),
+    }
+  })
+
 const updateTitleInTree = (nodes, id, title) =>
   nodes.map((node) => {
     if (node.id === id) {
@@ -22,280 +77,385 @@ const updateTitleInTree = (nodes, id, title) =>
     return { ...node, children: updateTitleInTree(node.children, id, title) }
   })
 
-const addChildToTree = (nodes, parentId) =>
-  nodes.map((node) => {
-    if (node.id === parentId) {
-      return { ...node, children: [...node.children, createNode()] }
-    }
-    return { ...node, children: addChildToTree(node.children, parentId) }
-  })
+const SelectionModal = ({
+  title,
+  description,
+  options,
+  value,
+  onChange,
+  onCancel,
+  onConfirm,
+  confirmLabel,
+}) => (
+  <div className="modal-backdrop" role="presentation">
+    <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <h2>{title}</h2>
+      <p>{description}</p>
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onCancel}>
+          キャンセル
+        </button>
+        <button className="btn primary" onClick={onConfirm} disabled={!value}>
+          {confirmLabel}
+        </button>
+      </div>
+    </div>
+  </div>
+)
 
-const insertAfter = (nodes, targetId, newNode) => {
-  const index = nodes.findIndex((node) => node.id === targetId)
-  if (index === -1) {
-    return nodes
-  }
-  return [...nodes.slice(0, index + 1), newNode, ...nodes.slice(index + 1)]
-}
-
-const addSiblingInTree = (nodes, parentId, nodeId) => {
-  if (parentId == null) {
-    return insertAfter(nodes, nodeId, createNode())
-  }
-
-  return nodes.map((node) => {
-    if (node.id === parentId) {
-      return { ...node, children: insertAfter(node.children, nodeId, createNode()) }
-    }
-    return {
-      ...node,
-      children: addSiblingInTree(node.children, parentId, nodeId),
-    }
-  })
-}
-
-const BASE_SIZES = [320, 260, 220, 200]
-const HEADER_HEIGHT = 110
-const CHILD_GAP = 12
-const NODE_PADDING = 24
-
-const baseSizeForDepth = (depth) =>
-  BASE_SIZES[Math.min(depth, BASE_SIZES.length - 1)]
-
-const columnsForChildren = (count) => (count === 0 ? 1 : Math.ceil(Math.sqrt(count)))
-
-const computeLayout = (node, depth) => {
-  const baseSize = baseSizeForDepth(depth)
-  if (node.children.length === 0) {
-    return {
-      size: baseSize,
-      childMaxSize: baseSizeForDepth(depth + 1),
-      columns: 1,
-    }
-  }
-
-  const childLayouts = node.children.map((child) => computeLayout(child, depth + 1))
-  const maxChildSize = Math.max(
-    ...childLayouts.map((child) => child.size),
-    baseSizeForDepth(depth + 1),
-  )
-  const columns = columnsForChildren(node.children.length)
-  const rows = Math.ceil(node.children.length / columns)
-  const childrenWidth = columns * maxChildSize + (columns - 1) * CHILD_GAP
-  const childrenHeight = rows * maxChildSize + (rows - 1) * CHILD_GAP
-  const contentWidth = Math.max(childrenWidth, baseSize * 0.6)
-  const contentHeight = HEADER_HEIGHT + childrenHeight
-  const rectWidth = contentWidth + NODE_PADDING * 2
-  const rectHeight = contentHeight + NODE_PADDING * 2
-  const diameter = Math.ceil(Math.sqrt(rectWidth ** 2 + rectHeight ** 2))
-
-  return {
-    size: Math.max(baseSize, diameter),
-    childMaxSize: maxChildSize,
-    columns,
-  }
-}
-
-const TaskNode = ({
-  node,
-  parentId,
-  onAddChild,
-  onAddSibling,
+const LargeMiddleScreen = ({
+  nodes,
+  selectedLargeId,
+  setSelectedLargeId,
+  onAddLarge,
+  onAddMiddle,
   onUpdateTitle,
-  index,
-  depth,
 }) => {
-  const layout = computeLayout(node, depth)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [showAddMiddleModal, setShowAddMiddleModal] = useState(false)
+  const [targetLargeId, setTargetLargeId] = useState('')
+  const selectedLarge = findLargeById(nodes, selectedLargeId)
+
+  useEffect(() => {
+    const fromState = location.state?.selectedLargeId
+    if (fromState && fromState !== selectedLargeId) {
+      setSelectedLargeId(fromState)
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [location.pathname, location.state, navigate, selectedLargeId, setSelectedLargeId])
+
+  useEffect(() => {
+    if (nodes.length === 0) {
+      if (selectedLargeId) {
+        setSelectedLargeId('')
+      }
+      return
+    }
+
+    if (!selectedLarge) {
+      setSelectedLargeId(nodes[0].id)
+    }
+  }, [nodes, selectedLarge, selectedLargeId, setSelectedLargeId])
+
+  const openAddMiddleModal = () => {
+    if (nodes.length === 0) {
+      return
+    }
+    setTargetLargeId(selectedLarge?.id ?? nodes[0].id)
+    setShowAddMiddleModal(true)
+  }
+
+  const handleConfirmAddMiddle = () => {
+    if (!targetLargeId) {
+      return
+    }
+    onAddMiddle(targetLargeId)
+    setSelectedLargeId(targetLargeId)
+    setShowAddMiddleModal(false)
+  }
 
   return (
-    <div
-      className="node"
-      data-depth={depth}
-      style={{
-        '--i': index,
-        '--node-size': `${layout.size}px`,
-        '--node-padding': `${NODE_PADDING}px`,
-        '--child-gap': `${CHILD_GAP}px`,
-        '--child-columns': layout.columns,
-        '--child-max-size': `${layout.childMaxSize}px`,
-      }}
-    >
-      <div className="node-card">
-        <input
-          className="node-title"
-          value={node.title}
-          onChange={(event) => onUpdateTitle(node.id, event.target.value)}
-        placeholder="タスク名"
-      />
-      <div className="node-actions">
-        <button className="action-btn" onClick={() => onAddChild(node.id)}>
-          +子タスク
-        </button>
-        <button className="action-btn ghost" onClick={() => onAddSibling(parentId, node.id)}>
-          +同階層
-        </button>
-      </div>
-      {node.children.length > 0 && (
-        <div className="children">
-          {node.children.map((child, childIndex) => (
-            <TaskNode
-              key={child.id}
-              node={child}
-              parentId={node.id}
-              onAddChild={onAddChild}
-              onAddSibling={onAddSibling}
-              onUpdateTitle={onUpdateTitle}
-              index={childIndex}
-              depth={depth + 1}
-            />
-          ))}
+    <div className="screen">
+      <header className="screen-header">
+        <div>
+          <p className="eyebrow">GTD</p>
+          <h1>大階層 / 中階層</h1>
         </div>
+        <div className="toolbar">
+          <button className="btn primary" onClick={onAddLarge}>
+            大階層タスク追加
+          </button>
+          <button className="btn" onClick={openAddMiddleModal} disabled={nodes.length === 0}>
+            中階層タスク追加
+          </button>
+        </div>
+      </header>
+
+      {nodes.length === 0 ? (
+        <section className="empty-state">
+          <h2>まず大階層を追加</h2>
+          <p>右上の「大階層タスク追加」から開始できます。</p>
+        </section>
+      ) : (
+        <section className="board two-column">
+          <div className="panel">
+            <h2>大階層</h2>
+            <div className="list">
+              {nodes.map((large) => (
+                <div
+                  key={large.id}
+                  className={`list-item selectable ${selectedLarge?.id === large.id ? 'active' : ''}`}
+                  onClick={() => setSelectedLargeId(large.id)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setSelectedLargeId(large.id)
+                    }
+                  }}
+                >
+                  <input
+                    value={large.title}
+                    onChange={(event) => onUpdateTitle(large.id, event.target.value)}
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => setSelectedLargeId(large.id)}
+                    placeholder="大階層名"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="panel">
+            <h2>中階層</h2>
+            {!selectedLarge || selectedLarge.children.length === 0 ? (
+              <p className="panel-empty">中階層がありません。右上から追加してください。</p>
+            ) : (
+              <div className="list">
+                {selectedLarge.children.map((middle) => (
+                  <div
+                    key={middle.id}
+                    className="list-item middle-card"
+                    onClick={() => navigate(`/middle/${selectedLarge.id}/${middle.id}`)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        navigate(`/middle/${selectedLarge.id}/${middle.id}`)
+                      }
+                    }}
+                  >
+                    <input
+                      value={middle.title}
+                      onChange={(event) => onUpdateTitle(middle.id, event.target.value)}
+                      onClick={(event) => event.stopPropagation()}
+                      placeholder="中階層名"
+                    />
+                    <span className="link-hint">クリックで中小画面へ</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       )}
-      </div>
+
+      {showAddMiddleModal && (
+        <SelectionModal
+          title="中階層の追加先を選択"
+          description="どの大階層に中階層を追加するかを選んでください。"
+          options={nodes.map((node) => ({ id: node.id, label: node.title || '名称未設定' }))}
+          value={targetLargeId}
+          onChange={setTargetLargeId}
+          onCancel={() => setShowAddMiddleModal(false)}
+          onConfirm={handleConfirmAddMiddle}
+          confirmLabel="追加"
+        />
+      )}
+    </div>
+  )
+}
+
+const MiddleSmallScreen = ({ nodes, onAddMiddle, onAddSmall, onUpdateTitle }) => {
+  const navigate = useNavigate()
+  const { largeId, middleId } = useParams()
+  const [showAddSmallModal, setShowAddSmallModal] = useState(false)
+  const [targetMiddleId, setTargetMiddleId] = useState('')
+  const large = findLargeById(nodes, largeId)
+  const middle = findMiddleById(nodes, largeId, middleId)
+  const middleOptions = useMemo(() => large?.children ?? [], [large])
+
+  useEffect(() => {
+    if (!large) {
+      navigate('/', { replace: true })
+      return
+    }
+
+    if (!middle) {
+      const firstMiddle = large.children[0]
+      if (!firstMiddle) {
+        navigate('/', { replace: true, state: { selectedLargeId: large.id } })
+        return
+      }
+      navigate(`/middle/${large.id}/${firstMiddle.id}`, { replace: true })
+    }
+  }, [large, middle, navigate])
+
+  if (!large || !middle) {
+    return null
+  }
+
+  const handleAddMiddle = () => {
+    onAddMiddle(large.id)
+  }
+
+  const openAddSmallModal = () => {
+    setTargetMiddleId(middle.id)
+    setShowAddSmallModal(true)
+  }
+
+  const handleConfirmAddSmall = () => {
+    if (!targetMiddleId) {
+      return
+    }
+    onAddSmall(large.id, targetMiddleId)
+    navigate(`/middle/${large.id}/${targetMiddleId}`)
+    setShowAddSmallModal(false)
+  }
+
+  return (
+    <div className="screen">
+      <header className="screen-header">
+        <div>
+          <p className="eyebrow">GTD</p>
+          <h1>中階層 / 小階層</h1>
+          <p className="subtitle">
+            {large.title || '大階層未設定'} / {middle.title || '中階層未設定'}
+          </p>
+        </div>
+        <div className="toolbar">
+          <button
+            className="btn ghost"
+            onClick={() => navigate('/', { state: { selectedLargeId: large.id } })}
+          >
+            大階層へ遷移
+          </button>
+          <button className="btn" onClick={handleAddMiddle}>
+            中階層タスク追加
+          </button>
+          <button className="btn primary" onClick={openAddSmallModal}>
+            小階層タスク追加
+          </button>
+        </div>
+      </header>
+
+      <section className="board two-column">
+        <div className="panel">
+          <h2>中階層（同じ大階層配下）</h2>
+          <div className="list">
+            {middleOptions.map((item) => (
+              <div
+                key={item.id}
+                className={`list-item selectable ${item.id === middle.id ? 'active' : ''}`}
+                onClick={() => navigate(`/middle/${large.id}/${item.id}`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    navigate(`/middle/${large.id}/${item.id}`)
+                  }
+                }}
+              >
+                <input
+                  value={item.title}
+                  onChange={(event) => onUpdateTitle(item.id, event.target.value)}
+                  onClick={(event) => event.stopPropagation()}
+                  placeholder="中階層名"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <h2>小階層</h2>
+          {middle.children.length === 0 ? (
+            <p className="panel-empty">小階層がありません。右上から追加してください。</p>
+          ) : (
+            <div className="list">
+              {middle.children.map((small) => (
+                <div key={small.id} className="list-item">
+                  <input
+                    value={small.title}
+                    onChange={(event) => onUpdateTitle(small.id, event.target.value)}
+                    placeholder="小階層名"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {showAddSmallModal && (
+        <SelectionModal
+          title="小階層の追加先を選択"
+          description="どの中階層に小階層を追加するかを選んでください。"
+          options={middleOptions.map((item) => ({
+            id: item.id,
+            label: item.title || '名称未設定',
+          }))}
+          value={targetMiddleId}
+          onChange={setTargetMiddleId}
+          onCancel={() => setShowAddSmallModal(false)}
+          onConfirm={handleConfirmAddSmall}
+          confirmLabel="追加"
+        />
+      )}
     </div>
   )
 }
 
 function App() {
-  const [rootTitle, setRootTitle] = useState('')
   const [nodes, setNodes] = useState([])
-  const [zoom, setZoom] = useState(1)
-  const dragState = useRef({ active: false, x: 0, y: 0, left: 0, top: 0 })
-
-  const addRootNode = () => {
-    const trimmed = rootTitle.trim()
-    if (!trimmed) {
-      return
-    }
-    setNodes((prev) => [...prev, createNode(trimmed)])
-    setRootTitle('')
-  }
+  const [selectedLargeId, setSelectedLargeId] = useState('')
 
   const updateTitle = (id, title) => {
     setNodes((prev) => updateTitleInTree(prev, id, title))
   }
 
-  const addChild = (parentId) => {
-    setNodes((prev) => addChildToTree(prev, parentId))
+  const handleAddLarge = () => {
+    const created = createNode('新規大階層')
+    setNodes((prev) => addLarge(prev, '新規大階層', created))
+    setSelectedLargeId(created.id)
   }
 
-  const addSibling = (parentId, nodeId) => {
-    setNodes((prev) => addSiblingInTree(prev, parentId, nodeId))
+  const handleAddMiddle = (largeId) => {
+    setNodes((prev) => addMiddle(prev, largeId))
   }
 
-  const clampZoom = (value) => Math.min(1.6, Math.max(0.5, value))
-  const handleWheelZoom = (event) => {
-    event.preventDefault()
-    const direction = event.deltaY < 0 ? 1 : -1
-    setZoom((value) => clampZoom(value + direction * 0.08))
-  }
-
-  const handleDragStart = (event) => {
-    const target = event.currentTarget
-    dragState.current = {
-      active: true,
-      x: event.clientX,
-      y: event.clientY,
-      left: target.scrollLeft,
-      top: target.scrollTop,
-    }
-  }
-
-  const handleDragMove = (event) => {
-    if (!dragState.current.active) {
-      return
-    }
-    const target = event.currentTarget
-    const dx = event.clientX - dragState.current.x
-    const dy = event.clientY - dragState.current.y
-    target.scrollLeft = dragState.current.left - dx
-    target.scrollTop = dragState.current.top - dy
-  }
-
-  const handleDragEnd = () => {
-    dragState.current.active = false
+  const handleAddSmall = (largeId, middleId) => {
+    setNodes((prev) => addSmall(prev, largeId, middleId))
   }
 
   return (
-    <div className="app">
-      <header className="hero">
-        <p className="eyebrow">Task Atlas</p>
-        <h1>タスクを右へ、下へ。思考をほどく!!!!!!</h1>
-        <p className="sub">
-          右クリックで子タスク、下クリックで同階層。1クリックで箱を増やし、細分化を加速。
-        </p>
-        <div className="root-input">
-          <input
-            value={rootTitle}
-            onChange={(event) => setRootTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                addRootNode()
-              }
-            }}
-            placeholder="大項目を入力"
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <LargeMiddleScreen
+            nodes={nodes}
+            selectedLargeId={selectedLargeId}
+            setSelectedLargeId={setSelectedLargeId}
+            onAddLarge={handleAddLarge}
+            onAddMiddle={handleAddMiddle}
+            onUpdateTitle={updateTitle}
           />
-          <button className="primary" onClick={addRootNode}>
-            大項目を追加
-          </button>
-        </div>
-        <p className="hint">Enterでも追加できます</p>
-      </header>
-
-      <main className="canvas">
-        <div className="canvas-header">
-          <p className="canvas-title">タスクマップ</p>
-          <div className="zoom-controls">
-            <button
-              className="zoom-btn"
-              onClick={() => setZoom((value) => clampZoom(value - 0.1))}
-            >
-              −
-            </button>
-            <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-            <button
-              className="zoom-btn"
-              onClick={() => setZoom((value) => clampZoom(value + 0.1))}
-            >
-              ＋
-            </button>
-            <button className="zoom-btn ghost" onClick={() => setZoom(1)}>
-              100%
-            </button>
-          </div>
-        </div>
-        <div
-          className="canvas-body"
-          onWheel={handleWheelZoom}
-          onMouseDown={handleDragStart}
-          onMouseMove={handleDragMove}
-          onMouseUp={handleDragEnd}
-          onMouseLeave={handleDragEnd}
-        >
-          {nodes.length === 0 ? (
-            <div className="empty">
-              <h2>まずは大項目を1つ追加</h2>
-              <p>子タスクや同階層を増やして、円の中に構造を作りましょう。</p>
-            </div>
-          ) : (
-            <div className="tree" style={{ transform: `scale(${zoom})` }}>
-              {nodes.map((node, index) => (
-                <TaskNode
-                  key={node.id}
-                  node={node}
-                  parentId={null}
-                  onAddChild={addChild}
-                  onAddSibling={addSibling}
-                  onUpdateTitle={updateTitle}
-                  index={index}
-                  depth={0}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
+        }
+      />
+      <Route
+        path="/middle/:largeId/:middleId"
+        element={
+          <MiddleSmallScreen
+            nodes={nodes}
+            onAddMiddle={handleAddMiddle}
+            onAddSmall={handleAddSmall}
+            onUpdateTitle={updateTitle}
+          />
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   )
 }
 
