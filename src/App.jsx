@@ -176,6 +176,9 @@ const LargeMiddleScreen = ({
           <button className="btn" onClick={openAddMiddleModal} disabled={nodes.length === 0}>
             中階層タスク追加
           </button>
+          <button className="btn ghost" onClick={() => navigate('/tasks')}>
+            タスク一覧
+          </button>
         </div>
       </header>
 
@@ -335,6 +338,9 @@ const MiddleSmallScreen = ({ nodes, onAddMiddle, onAddSmall, onUpdateTitle }) =>
           <button className="btn primary" onClick={openAddSmallModal}>
             小階層タスク追加
           </button>
+          <button className="btn ghost" onClick={() => navigate('/tasks')}>
+            タスク一覧
+          </button>
         </div>
       </header>
 
@@ -406,6 +412,128 @@ const MiddleSmallScreen = ({ nodes, onAddMiddle, onAddSmall, onUpdateTitle }) =>
   )
 }
 
+const TaskDetailModal = ({ task, onClose }) => {
+  const [targetMinutes, setTargetMinutes] = useState('')
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <div
+        className="modal task-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="タスク詳細"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <h2>{task.title || '名称未設定'}</h2>
+        <label className="target-time-label">
+          目標時間（分）
+          <input
+            type="number"
+            min="1"
+            className="target-time-input"
+            value={targetMinutes}
+            onChange={(event) => setTargetMinutes(event.target.value)}
+            placeholder="例: 25"
+          />
+        </label>
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={onClose}>
+            閉じる
+          </button>
+          <button className="btn primary" disabled={!targetMinutes}>
+            スタート
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const TaskListScreen = ({ nodes }) => {
+  const navigate = useNavigate()
+  const [selectedTask, setSelectedTask] = useState(null)
+
+  const rows = useMemo(() => {
+    const result = []
+    for (const large of nodes) {
+      if (large.children.length === 0) {
+        result.push({ large, middle: null, small: null })
+      } else {
+        for (const middle of large.children) {
+          if (middle.children.length === 0) {
+            result.push({ large, middle, small: null })
+          } else {
+            for (const small of middle.children) {
+              result.push({ large, middle, small })
+            }
+          }
+        }
+      }
+    }
+    return result
+  }, [nodes])
+
+  return (
+    <div className="screen">
+      <header className="screen-header">
+        <div>
+          <p className="eyebrow">GTD</p>
+          <h1>タスク一覧</h1>
+        </div>
+        <div className="toolbar">
+          <button className="btn ghost" onClick={() => navigate('/')}>
+            大階層へ戻る
+          </button>
+        </div>
+      </header>
+
+      {rows.length === 0 ? (
+        <section className="empty-state">
+          <h2>タスクがありません</h2>
+          <p>まず大階層画面からタスクを追加してください。</p>
+        </section>
+      ) : (
+        <section className="board">
+          <div className="task-table">
+            <div className="task-table-header">
+              <div className="task-table-cell">大階層</div>
+              <div className="task-table-cell">中階層</div>
+              <div className="task-table-cell">小階層</div>
+            </div>
+            {rows.map((row, index) => (
+              <div
+                key={index}
+                className="task-table-row"
+                onClick={() => {
+                  const task = row.small ?? row.middle ?? row.large
+                  setSelectedTask(task)
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    const task = row.small ?? row.middle ?? row.large
+                    setSelectedTask(task)
+                  }
+                }}
+              >
+                <div className="task-table-cell">{row.large.title || '名称未設定'}</div>
+                <div className="task-table-cell">{row.middle?.title || '—'}</div>
+                <div className="task-table-cell">{row.small?.title || '—'}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {selectedTask && (
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+      )}
+    </div>
+  )
+}
+
 function App() {
   const [nodes, setNodes] = useState([])
   const [selectedLargeId, setSelectedLargeId] = useState('')
@@ -453,6 +581,10 @@ function App() {
             onUpdateTitle={updateTitle}
           />
         }
+      />
+      <Route
+        path="/tasks"
+        element={<TaskListScreen nodes={nodes} />}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
